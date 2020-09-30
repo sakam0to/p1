@@ -12,15 +12,16 @@ import (
 )
 
 type server struct {
-	conn         *lspnet.UDPConn
-	readBuf      *list.List
-	readFlag     chan int //the channel of read buffer flag
-	writeBuf     *list.List
-	connCoun     int                     // Connection counter as connID
-	connSendCoun map[int]int             // Connection : the counter of sending sequence
-	connAddr     map[int]*lspnet.UDPAddr // Connection : Address
-	connAckSeq   map[int]chan int        // Connection : Acknowledge of sequence number
-	connSenSeq   map[int]chan int        // Connection : Sending sequence number
+	conn          *lspnet.UDPConn
+	readBuf       *list.List
+	rBufWriteLock chan int //the channel of readbuffer Writing flag
+	rBufReadLock  chan int //the channel of readbuffer Reading flag
+	writeBuf      *list.List
+	connCoun      int                     // Connection counter as connID
+	connSendCoun  map[int]int             // Connection : the counter of sending sequence
+	connAddr      map[int]*lspnet.UDPAddr // Connection : Address
+	connAckSeq    map[int]chan int        // Connection : Acknowledge of sequence number
+	connSenSeq    map[int]chan int        // Connection : Sending sequence number
 }
 
 // NewServer creates, initiates, and returns a new server. This function should
@@ -30,7 +31,7 @@ type server struct {
 // project 0, etc.) and immediately return. It should return a non-nil error if
 // there was an error resolving or listening on the specified port number.
 func NewServer(port int, params *Params) (Server, error) {
-	server := server{readBuf: list.New(), readFlag: make(chan int), writeBuf: list.New(), connSendCoun: make(map[int]int), connAddr: make(map[int]*lspnet.UDPAddr), connAckSeq: make(map[int]chan int), connSenSeq: make(map[int]chan int)}
+	server := server{readBuf: list.New(), rBufWriteLock: make(chan int), rBufReadLock: make(chan int), writeBuf: list.New(), connSendCoun: make(map[int]int), connAddr: make(map[int]*lspnet.UDPAddr), connAckSeq: make(map[int]chan int), connSenSeq: make(map[int]chan int)}
 	laddr, err := lspnet.ResolveUDPAddr("udp", "127.0.0.1:"+fmt.Sprint(port))
 
 	if err != nil {
@@ -46,18 +47,28 @@ func NewServer(port int, params *Params) (Server, error) {
 	server.conn = ln
 	go server.ReceiveRoutine()
 
+	go func() { server.rBufWriteLock <- 1 }()
 	return &server, nil
 }
 
 func (s *server) Read() (int, []byte, error) {
 	//fmt.Println("Read ")
-	select {
-	case <-s.readFlag:
-		message := s.readBuf.Remove(s.readBuf.Front()).(*Message)
 
-		//fmt.Println("Read ", message.String())
-		return message.ConnID, message.Payload, nil
+	<-s.rBufReadLock
+	element := s.readBuf.Front()
+	<-s.rBufWriteLock
+	message := element.Value.(*Message)
+	s.readBuf.Remove(element)
+
+	if s.readBuf.Len() > 0 {
+		go func() { s.rBufReadLock <- 1 }()
 	}
+
+	//fmt.Println("Len ", s.readBuf.Len())
+
+	go func() { s.rBufWriteLock <- 1 }()
+	//fmt.Println("Read ", message.String())
+	return message.ConnID, message.Payload, nil
 }
 
 func (s *server) Write(connId int, payload []byte) error {
@@ -83,8 +94,10 @@ func (s *server) Close() error {
 func (s *server) ReceiveRoutine() {
 	buffer := make([]byte, 1024)
 	for {
+		//fmt.Print("waiting...\n")
 		n, addr, err := s.conn.ReadFromUDP(buffer)
 
+		//fmt.Printf("received data: %s from %s\n", string(buffer[0:n]), addr.String())
 		if err != nil {
 			break
 		}
@@ -93,7 +106,6 @@ func (s *server) ReceiveRoutine() {
 			break
 		}
 
-		//fmt.Printf("received data: %s from %s\n", string(buffer[0:n]), addr.String())
 		var message *Message
 		err = json.Unmarshal(buffer[0:n], &message)
 		if err != nil {
@@ -123,13 +135,22 @@ func (s *server) ReadRoutine(message *Message) {
 		}
 	} else {
 
+		//fmt.Println("MsgData")
 		//fmt.Printf("Received data: %s\n", message.String())
 		seqNum := <-s.connAckSeq[message.ConnID]
 		//fmt.Println("seqNum", seqNum)
 		if seqNum+1 == message.SeqNum {
-			s.readBuf.PushBack(message)
 			go s.Ack(message.ConnID, message.SeqNum)
-			s.readFlag <- 1
+			<-s.rBufWriteLock
+			//fmt.Printf("ConnID %d seqNum %d\n", message.ConnID, message.SeqNum)
+			s.readBuf.PushBack(message)
+			if s.readBuf.Len() == 1 {
+				go func() { s.rBufReadLock <- 1 }()
+			}
+			go func() { s.rBufWriteLock <- 1 }()
+			//fmt.Println("Done")
+		} else {
+			fmt.Printf("seq is %d but %d is expected!", message.SeqNum, seqNum+1)
 		}
 	}
 }
