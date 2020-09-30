@@ -9,7 +9,6 @@ import (
 	"github.com/cmu440/lspnet"
 )
 
-var id = 1
 var seq = 1
 
 type client struct {
@@ -47,9 +46,8 @@ func NewClient(hostport string, params *Params) (Client, error) {
 			fmt.Printf("Received Ack!\n")
 			newClient = &client{
 				conn: conn,
-				connID: id,
+				connID: rcvMsg.ConnID,
 			}
-			id++
 			return newClient, err
 		} else {
 			fmt.Printf("Connect received: %s\n", string(b_))
