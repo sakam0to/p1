@@ -13,6 +13,7 @@ type client struct {
     seq          int
     unackedCount int
     params       *Params
+    //TODO: writeChan and readChan should not be used to store arbitrary length data; Need to switch to linked list.
     writeChan    chan []byte
     readChan     chan []byte
     setUnackChan chan int
@@ -42,9 +43,6 @@ func NewClient(hostport string, params *Params) (Client, error) {
     b, _ = json.Marshal(msg)
     _, _ = conn.Write(b)
     for {
-        // Eventually some epoch logic here?
-        // Currently assuming the ack is going to arrive eventually
-        // Will need to get the connect requesting write from above in the loop accordingly
         var rcvMsg Message
         n, err := conn.Read(b_)
         err = json.Unmarshal(b_[0:n], &rcvMsg)
