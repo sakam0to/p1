@@ -50,25 +50,25 @@ func NewServer(port int, params *Params) (Server, error) {
 }
 
 func (s *server) Read() (int, []byte, error) {
-	fmt.Println("Read ")
+	//fmt.Println("Read ")
 	select {
 	case <-s.readFlag:
 		message := s.readBuf.Remove(s.readBuf.Front()).(*Message)
 
-		fmt.Println("Read ", message.String())
+		//fmt.Println("Read ", message.String())
 		return message.ConnID, message.Payload, nil
 	}
 }
 
 func (s *server) Write(connId int, payload []byte) error {
-	fmt.Println("Write conn:", connId)
+	//fmt.Println("Write conn:", connId)
 	seqNum := s.connSendCoun[connId]
 	checksum := uint16(ByteArray2Checksum(payload))
 	message := NewData(connId, seqNum, len(payload), payload, checksum)
 
 	go s.WriteRoutine(message)
 	s.connSendCoun[connId] = seqNum + 1
-	fmt.Println("Write Done")
+	//fmt.Println("Write Done")
 	return nil
 }
 
@@ -93,13 +93,14 @@ func (s *server) ReceiveRoutine() {
 			break
 		}
 
-		fmt.Printf("received data: %s from %s\n", string(buffer[0:n]), addr.String())
+		//fmt.Printf("received data: %s from %s\n", string(buffer[0:n]), addr.String())
 		var message *Message
 		err = json.Unmarshal(buffer[0:n], &message)
 		if err != nil {
 			fmt.Println("error:", err)
 		}
 		if message.Type == MsgConnect {
+			//fmt.Printf("received data: %s from %s\n", string(buffer[0:n]), addr.String())
 			s.connCoun++
 			s.connSendCoun[s.connCoun] = 1
 			s.connAddr[s.connCoun] = addr
@@ -115,14 +116,16 @@ func (s *server) ReceiveRoutine() {
 
 func (s *server) ReadRoutine(message *Message) {
 	if message.Type == MsgAck {
-		//fmt.Println("MsgAck")
+		////fmt.Println("MsgAck")
 		if message.SeqNum > 0 { //Not HeartBeat
+			//fmt.Printf("Received data: %s\n", message.String())
 			s.connSenSeq[message.ConnID] <- message.SeqNum
 		}
 	} else {
-		seqNum := <-s.connAckSeq[message.ConnID]
 
-		fmt.Println("seqNum:", seqNum)
+		//fmt.Printf("Received data: %s\n", message.String())
+		seqNum := <-s.connAckSeq[message.ConnID]
+		//fmt.Println("seqNum", seqNum)
 		if seqNum+1 == message.SeqNum {
 			s.readBuf.PushBack(message)
 			go s.Ack(message.ConnID, message.SeqNum)
@@ -132,10 +135,10 @@ func (s *server) ReadRoutine(message *Message) {
 }
 
 func (s *server) SendRoutine(data []byte, addr *lspnet.UDPAddr) {
-	fmt.Printf("Send data: %s to %s\n", string(data), addr.String())
+	//fmt.Printf("Send data: %s to %s\n", string(data), addr.String())
 	_, err := s.conn.WriteToUDP(data, addr)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("error:", err)
 		return
 	}
 }
@@ -143,7 +146,7 @@ func (s *server) SendRoutine(data []byte, addr *lspnet.UDPAddr) {
 func (s *server) WriteRoutine(message *Message) {
 	data, err := json.Marshal(message)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("error:", err)
 		return
 	}
 	addr := s.connAddr[message.ConnID]
@@ -154,7 +157,7 @@ func (s *server) WriteRoutine(message *Message) {
 			if ack != message.SeqNum {
 				s.SendRoutine(data, addr)
 			} else {
-				s.connSenSeq[message.ConnID] <- ack + 1
+				//s.connSenSeq[message.ConnID] <- ack + 1
 				break
 			}
 		}
@@ -163,7 +166,7 @@ func (s *server) WriteRoutine(message *Message) {
 
 func (s *server) Ack(connID, seqNum int) {
 	ack := NewAck(connID, seqNum)
-	fmt.Println("ACK ->", ack.String())
+	//fmt.Println("ACK ->", ack.String())
 	s.WriteRoutine(ack)
 	s.connAckSeq[connID] <- seqNum
 }
