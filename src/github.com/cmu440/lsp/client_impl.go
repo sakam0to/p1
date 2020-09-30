@@ -9,11 +9,10 @@ import (
 	"github.com/cmu440/lspnet"
 )
 
-var seq = 1
-
 type client struct {
 	conn *lspnet.UDPConn
 	connID int
+	seq int
 }
 
 // NewClient creates, initiates, and returns a new client. This function
@@ -47,6 +46,7 @@ func NewClient(hostport string, params *Params) (Client, error) {
 			newClient = &client{
 				conn: conn,
 				connID: rcvMsg.ConnID,
+				seq: 1,
 			}
 			return newClient, err
 		} else {
@@ -84,10 +84,10 @@ func (c *client) Read() ([]byte, error) {
 
 func (c *client) Write(payload []byte) error {
 	checksum := ByteArray2Checksum(payload)
-	msg := NewData(c.connID, seq, len(payload), payload, uint16(checksum))
+	msg := NewData(c.connID, c.seq, len(payload), payload, uint16(checksum))
 	b, err := json.Marshal(msg)
 	_, err = c.conn.Write(b)
-	seq++
+	c.seq++
 	return err
 }
 
