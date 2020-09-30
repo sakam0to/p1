@@ -9,15 +9,19 @@ import (
 )
 
 type client struct {
-	conn *lspnet.UDPConn
-	connID int
-	seq int
+	conn         *lspnet.UDPConn
+	connID       int
+	seq          int
 	unackedCount int
-	params *Params
-	writeChan chan []byte
-	readChan chan []byte
-	closeWrite chan bool
-	closeRead chan bool
+	params       *Params
+	writeChan    chan []byte
+	readChan     chan []byte
+	setUnackChan chan int
+	getUnackChan chan bool
+	retUnackChan chan int
+	closeMain    chan bool
+	closeWrite   chan bool
+	closeRead    chan bool
 }
 
 // NewClient creates, initiates, and returns a new client. This function
@@ -47,16 +51,21 @@ func NewClient(hostport string, params *Params) (Client, error) {
 		err = json.Unmarshal(b_[0:n], &rcvMsg)
 		if rcvMsg.Type == MsgAck {
 			client := &client{
-				conn: conn,
-				connID: rcvMsg.ConnID,
-				seq: 1,
+				conn:         conn,
+				connID:       rcvMsg.ConnID,
+				seq:          1,
 				unackedCount: 0,
-				params: params,
-				writeChan: make(chan []byte),
-				readChan: make(chan []byte),
-				closeWrite: make(chan bool),
-				closeRead: make(chan bool),
+				params:       params,
+				writeChan:    make(chan []byte),
+				readChan:     make(chan []byte),
+				setUnackChan: make(chan int),
+				getUnackChan: make(chan bool),
+				retUnackChan: make(chan int),
+				closeMain:    make(chan bool),
+				closeWrite:   make(chan bool),
+				closeRead:    make(chan bool),
 			}
+			go client.MainRoutine()
 			go client.ReadRoutine()
 			go client.WriteRoutine()
 			return client, err
@@ -69,6 +78,19 @@ func NewClient(hostport string, params *Params) (Client, error) {
 				println(rcvMsg.Type)
 				println(rcvMsg.ConnID)
 			}
+		}
+	}
+}
+
+func (c *client) MainRoutine() {
+	for {
+		select {
+		case <-c.closeMain:
+			return
+		case delta := <-c.setUnackChan:
+			c.unackedCount += delta
+		case <- c.getUnackChan:
+			c.retUnackChan <- c.unackedCount
 		}
 	}
 }
@@ -90,8 +112,7 @@ func (c *client) ReadRoutine() {
 				_, _ = c.conn.Write(b)
 				c.readChan <- rcvMsg.Payload
 			} else if rcvMsg.Type == MsgAck {
-				// May need to improve this for race and other stability
-				c.unackedCount--
+				c.setUnackChan <- -1
 			}
 		}
 	}
@@ -108,10 +129,11 @@ func (c *client) WriteRoutine() {
 			msg := NewData(c.connID, c.seq, len(payload), payload, uint16(checksum))
 			b, _ := json.Marshal(msg)
 			for {
-				if c.unackedCount < c.params.MaxUnackedMessages {
+				c.getUnackChan <- true
+				unackedCount := <-c.retUnackChan
+				if unackedCount < c.params.MaxUnackedMessages {
 					_, _ = c.conn.Write(b)
-					// Might need to send increments over a channel to pass race
-					c.unackedCount++
+					c.setUnackChan <- 1
 					break
 				}
 			}
@@ -135,6 +157,7 @@ func (c *client) Write(payload []byte) error {
 }
 
 func (c *client) Close() error {
+	c.closeMain <- true
 	c.closeRead <- true
 	c.closeWrite <- true
 	return nil
