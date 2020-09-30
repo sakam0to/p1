@@ -53,7 +53,8 @@ func (s *server) Read() (int, []byte, error) {
 	fmt.Println("Read ")
 	select {
 	case <-s.readFlag:
-		message := s.readBuf.Front().Value.(*Message)
+		message := s.readBuf.Remove(s.readBuf.Front()).(*Message)
+
 		fmt.Println("Read ", message.String())
 		return message.ConnID, message.Payload, nil
 	}
@@ -66,6 +67,7 @@ func (s *server) Write(connId int, payload []byte) error {
 	message := NewData(connId, seqNum, len(payload), payload, checksum)
 
 	go s.WriteRoutine(message)
+	s.connSendCoun[connId] = seqNum + 1
 	fmt.Println("Write Done")
 	return nil
 }
@@ -104,11 +106,6 @@ func (s *server) ReceiveRoutine() {
 			s.connAckSeq[s.connCoun] = make(chan int)
 			s.connSenSeq[s.connCoun] = make(chan int)
 			go s.Ack(s.connCoun, message.SeqNum)
-		} else if message.Type == MsgAck {
-			//fmt.Println("MsgAck")
-			if message.SeqNum > 0 { //Not HeartBeat
-				s.connSenSeq[message.ConnID] <- message.SeqNum
-			}
 		} else {
 			//fmt.Println("MsgData")
 			go s.ReadRoutine(message)
@@ -117,13 +114,20 @@ func (s *server) ReceiveRoutine() {
 }
 
 func (s *server) ReadRoutine(message *Message) {
-	seqNum := <-s.connAckSeq[message.ConnID]
+	if message.Type == MsgAck {
+		//fmt.Println("MsgAck")
+		if message.SeqNum > 0 { //Not HeartBeat
+			s.connSenSeq[message.ConnID] <- message.SeqNum
+		}
+	} else {
+		seqNum := <-s.connAckSeq[message.ConnID]
 
-	fmt.Println("seqNum:", seqNum)
-	if seqNum+1 == message.SeqNum {
-		s.readBuf.PushBack(message)
-		go s.Ack(message.ConnID, message.SeqNum)
-		s.readFlag <- 1
+		fmt.Println("seqNum:", seqNum)
+		if seqNum+1 == message.SeqNum {
+			s.readBuf.PushBack(message)
+			go s.Ack(message.ConnID, message.SeqNum)
+			s.readFlag <- 1
+		}
 	}
 }
 
