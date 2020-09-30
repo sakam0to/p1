@@ -2,10 +2,19 @@
 
 package lsp
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/cmu440/lspnet"
+)
+
+var id = 1
+var seq = 1
 
 type client struct {
-	// TODO: implement this!
+	conn *lspnet.UDPConn
+	connID int
 }
 
 // NewClient creates, initiates, and returns a new client. This function
@@ -19,21 +28,69 @@ type client struct {
 // hostport is a colon-separated string identifying the server's host address
 // and port number (i.e., "localhost:9999").
 func NewClient(hostport string, params *Params) (Client, error) {
-	return nil, errors.New("not yet implemented")
+	var newClient Client
+	raddr, _ := lspnet.ResolveUDPAddr("udp", hostport)
+	conn, _ := lspnet.DialUDP("udp", nil, raddr)
+	msg := NewConnect()
+	var b []byte = make([]byte, 1000)
+	var b_ []byte = make([]byte, 1000)
+	b, _ = json.Marshal(msg)
+	_, _ = conn.Write(b)
+	for {
+		// Eventually some epoch logic here?
+		// Currently assuming the ack is going to arrive eventually
+		// Will need to get the connect requesting write from above in the loop accordingly
+		var rcvMsg Message
+		n, err := conn.Read(b_)
+		err = json.Unmarshal(b_[0:n], &rcvMsg)
+		if rcvMsg.Type == MsgAck {
+			fmt.Printf("Received Ack!\n")
+			newClient = &client{
+				conn: conn,
+				connID: id,
+			}
+			id++
+			return newClient, err
+		} else {
+			fmt.Printf("Connect received: %s\n", string(b_))
+			err = json.Unmarshal(b_, &rcvMsg)
+			if err != nil {
+				fmt.Println("Unmarshal error", err)
+			} else {
+				println(rcvMsg.Type)
+				println(rcvMsg.ConnID)
+			}
+		}
+	}
 }
 
 func (c *client) ConnID() int {
-	return -1
+	return c.connID
 }
 
 func (c *client) Read() ([]byte, error) {
-	// TODO: remove this line when you are ready to begin implementing this method.
-	select {} // Blocks indefinitely.
-	return nil, errors.New("not yet implemented")
+	for {
+		var rcvMsg Message
+		var b []byte = make([]byte, 1000)
+		n, err := c.conn.Read(b)
+		err = json.Unmarshal(b[0:n], &rcvMsg)
+		fmt.Printf("Read: %s\n", string(b))
+		if rcvMsg.Type == MsgData {
+			ack := NewAck(c.connID, rcvMsg.SeqNum)
+			b, _ = json.Marshal(ack)
+			_, _ = c.conn.Write(b)
+			return rcvMsg.Payload, err
+		}
+	}
 }
 
 func (c *client) Write(payload []byte) error {
-	return errors.New("not yet implemented")
+	checksum := ByteArray2Checksum(payload)
+	msg := NewData(c.connID, seq, len(payload), payload, uint16(checksum))
+	b, err := json.Marshal(msg)
+	_, err = c.conn.Write(b)
+	seq++
+	return err
 }
 
 func (c *client) Close() error {
