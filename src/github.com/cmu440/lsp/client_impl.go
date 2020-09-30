@@ -3,9 +3,8 @@
 package lsp
 
 import (
-    "encoding/json"
-    "fmt"
-    "github.com/cmu440/lspnet"
+	"encoding/json"
+	"github.com/cmu440/lspnet"
 )
 
 type client struct {
@@ -69,15 +68,6 @@ func NewClient(hostport string, params *Params) (Client, error) {
             go client.ReadRoutine()
             go client.WriteRoutine()
             return client, err
-        } else {
-            fmt.Printf("Connect received: %s\n", string(b_))
-            err = json.Unmarshal(b_, &rcvMsg)
-            if err != nil {
-                fmt.Println("Unmarshal error", err)
-            } else {
-                println(rcvMsg.Type)
-                println(rcvMsg.ConnID)
-            }
         }
     }
 }
